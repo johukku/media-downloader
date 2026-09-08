@@ -1,0 +1,14 @@
+# バッチファイルは CRLF でないと正しく動かないことがあるため固定する
+*.bat text eol=crlf
+
+# 同梱の説明書はメモ帳で開かれる前提（UTF-8 BOM + CRLF）
+*.txt text eol=crlf
+
+# Python は LF でよい
+*.py text eol=lf
+*.md text eol=lf
+
+# バイナリ
+*.png binary
+*.ico binary
+*.zip binary
