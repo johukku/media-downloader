@@ -222,20 +222,32 @@ def ensure_all(on_progress=None, need_ffmpeg=True):
 # ---------------------------------------------------------------- 実行・更新
 
 
-def run_hidden(args, timeout=None):
-    """コンソール窓を出さずに実行し、(終了コード, 出力) を返す。"""
+def run_capture(args, timeout=None):
+    """コンソール窓を出さずに実行し、(終了コード, 標準出力, 標準エラー) を返す。
+
+    JSON を受け取りたいときは、警告が混ざらないようこちらを使う。
+    """
     try:
         p = subprocess.run(
             args,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             creationflags=NO_WINDOW,
             timeout=timeout,
         )
     except (OSError, subprocess.SubprocessError) as e:
-        return -1, str(e)
-    out = (p.stdout or b"").decode("utf-8", "replace").strip()
-    return p.returncode, out
+        return -1, "", str(e)
+
+    def decode(raw):
+        return (raw or b"").decode("utf-8", "replace")
+
+    return p.returncode, decode(p.stdout), decode(p.stderr)
+
+
+def run_hidden(args, timeout=None):
+    """コンソール窓を出さずに実行し、(終了コード, 出力) を返す。"""
+    code, out, err = run_capture(args, timeout=timeout)
+    return code, "\n".join(part for part in (out.strip(), err.strip()) if part)
 
 
 def ytdlp_version():

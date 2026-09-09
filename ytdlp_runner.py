@@ -8,6 +8,7 @@ GUI とは切り離してあるので、この単体でも動かせる:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -70,11 +71,74 @@ def hint_for(text):
     return None
 
 
-def build_args(url, mode, outdir, playlist=False, subs=False, mp4_only=False):
+class ProbeError(Exception):
+    """字幕一覧の取得に失敗した。メッセージはそのまま利用者に見せる。"""
+
+
+# よく出てくる言語だけ日本語にする。無いものは yt-dlp の名前をそのまま使う
+LANG_NAMES = {
+    "ja": "日本語", "en": "英語", "zh": "中国語", "zh-Hans": "中国語（簡体）",
+    "zh-Hant": "中国語（繁体）", "ko": "韓国語", "fr": "フランス語",
+    "de": "ドイツ語", "es": "スペイン語", "ru": "ロシア語", "pt": "ポルトガル語",
+    "it": "イタリア語", "th": "タイ語", "vi": "ベトナム語", "id": "インドネシア語",
+    "ar": "アラビア語", "hi": "ヒンディー語",
+}
+
+
+def probe_subtitles(url, timeout=180):
+    """URL を調べて (タイトル, 字幕の一覧) を返す。
+
+    一覧の各要素は {"lang", "name", "auto"}。auto は自動生成かどうか。
+    動画そのものはダウンロードしない。
+    """
+    args = [
+        binaries.ytdlp_path(),
+        "--ignore-config", "--no-colors", "--no-warnings", "--quiet",
+        "--skip-download", "--no-playlist",
+        "-J", url,
+    ]
+    code, out, err = binaries.run_capture(args, timeout=timeout)
+    if code != 0 or not out.strip():
+        raise ProbeError(err.strip() or "動画の情報を取得できませんでした。")
+    try:
+        data = json.loads(out)
+    except ValueError:
+        raise ProbeError("yt-dlp の応答を読み取れませんでした。")
+
+    title = data.get("title") or "(タイトル不明)"
+    items = []
+    for key, auto in (("subtitles", False), ("automatic_captions", True)):
+        for lang, tracks in (data.get(key) or {}).items():
+            name = ""
+            if isinstance(tracks, list) and tracks:
+                name = tracks[0].get("name") or ""
+            items.append({"lang": lang, "name": name, "auto": auto})
+
+    # 手動の字幕を先に、そのなかで日本語・英語を上に持ってくる
+    def order(item):
+        rank = {"ja": 0, "en": 1}.get(item["lang"].split("-")[0], 2)
+        return (item["auto"], rank, item["lang"])
+
+    items.sort(key=order)
+    return title, items
+
+
+def subtitle_label(item):
+    """一覧に表示する 1 行を作る。"""
+    name = LANG_NAMES.get(item["lang"]) or item["name"] or item["lang"]
+    kind = "自動生成" if item["auto"] else "手動"
+    return "{:<12s} {}（{}）".format(item["lang"], name, kind)
+
+
+def build_args(url, mode, outdir, playlist=False, subs=None, mp4_only=False):
     """yt-dlp に渡す引数を組み立てる。
 
     mp4_only は「画質より互換性」の切り替え。
     yt-dlp 公式の -t mp4 プリセットと同じ内容を明示的に並べている。
+
+    subs は字幕の指定。None なら字幕を保存しない。
+        {"langs": ["ja", "en"], "manual": True, "auto": False,
+         "fmt": "srt", "only": False}
     """
     args = [
         binaries.ytdlp_path(),
@@ -101,7 +165,13 @@ def build_args(url, mode, outdir, playlist=False, subs=False, mp4_only=False):
 
     args.append("--yes-playlist" if playlist else "--no-playlist")
 
-    if mode.startswith("video"):
+    subs = subs or {}
+    subs_only = bool(subs.get("only") and subs.get("langs"))
+
+    if subs_only:
+        # 字幕だけ欲しいときは、映像も音声も落とさない
+        args.append("--skip-download")
+    elif mode.startswith("video"):
         args += ["-f", "bv*+ba/b"]
         # 「res」は解像度の上限。指定しなければサイトが持っている最高のものを選ぶ
         res = {"video_1080": "res:1080", "video_720": "res:720"}.get(mode, "res")
@@ -118,9 +188,6 @@ def build_args(url, mode, outdir, playlist=False, subs=False, mp4_only=False):
             if res != "res":
                 args += ["-S", res]
 
-        if subs:
-            args += ["--write-subs", "--write-auto-subs",
-                     "--sub-langs", "ja.*,en.*", "--convert-subs", "srt"]
     elif mode == "audio_mp3":
         args += ["-f", "ba/b", "-x", "--audio-format", "mp3",
                  "--audio-quality", "0", "--embed-metadata"]
@@ -128,6 +195,15 @@ def build_args(url, mode, outdir, playlist=False, subs=False, mp4_only=False):
         args += ["-f", "ba/b", "-x", "--audio-format", "wav"]
     else:
         raise ValueError("未知のモード: {}".format(mode))
+
+    if subs.get("langs"):
+        # 手動の字幕と自動生成の字幕はスイッチが別なので、選ばれた側だけ立てる
+        if subs.get("manual"):
+            args.append("--write-subs")
+        if subs.get("auto"):
+            args.append("--write-auto-subs")
+        args += ["--sub-langs", ",".join(subs["langs"])]
+        args += ["--convert-subs", subs.get("fmt") or "srt"]
 
     args.append(url)
     return args
@@ -162,7 +238,7 @@ def _destination_of(line):
 class Job:
     """1 本の URL のダウンロード。中止できるように process を持つ。"""
 
-    def __init__(self, url, mode, outdir, playlist=False, subs=False, mp4_only=False):
+    def __init__(self, url, mode, outdir, playlist=False, subs=None, mp4_only=False):
         self.url = url
         self.mode = mode
         self.outdir = outdir
@@ -246,7 +322,20 @@ def main(argv):
     """開発用の簡易実行。"""
     if len(argv) < 2:
         print("使い方: python ytdlp_runner.py <URL> [保存先]")
+        print("        python ytdlp_runner.py --subs <URL>   字幕一覧だけ調べる")
         return 2
+
+    if argv[1] == "--subs":
+        if len(argv) < 3:
+            print("URL を指定してください。")
+            return 2
+        title, items = probe_subtitles(argv[2])
+        print("タイトル: {}".format(title))
+        print("字幕: {} 件".format(len(items)))
+        for item in items:
+            print("  " + subtitle_label(item))
+        return 0
+
     outdir = argv[2] if len(argv) > 2 else os.getcwd()
     if binaries.missing():
         print("部品を取得します...")

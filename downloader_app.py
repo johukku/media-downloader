@@ -113,15 +113,20 @@ class App:
         self.var_outdir = tk.StringVar(value=self.settings.get("outdir", default_outdir()))
         self.var_mode = tk.StringVar(value=self.settings.get("mode", "video_best"))
         self.var_playlist = tk.BooleanVar(value=self.settings.get("playlist", False))
-        self.var_subs = tk.BooleanVar(value=self.settings.get("subs", False))
         self.var_mp4 = tk.BooleanVar(value=self.settings.get("mp4_only", False))
+        self.var_subonly = tk.BooleanVar(value=False)
+        self.var_subfmt = tk.StringVar(value=self.settings.get("sub_format", "srt"))
+        self.var_subinfo = tk.StringVar(value="まだ調べていません")
         self.var_status = tk.StringVar(value="準備中...")
         self.var_parts = tk.StringVar(value="")
 
+        # 「字幕を調べる」で見つかった一覧。リストの並びとそのまま対応する
+        self.sub_items = []
+
         self.root.title("{} v{}".format(APP_TITLE, APP_VERSION))
         self.root.geometry("{}x{}".format(
-            self.settings.get("width", 780), self.settings.get("height", 640)))
-        self.root.minsize(700, 560)
+            self.settings.get("width", 800), self.settings.get("height", 800)))
+        self.root.minsize(720, 660)
 
         self._build_ui()
         self._update_states()
@@ -192,17 +197,47 @@ class App:
         opts.pack(fill="x", padx=8, pady=(0, 2))
         ttk.Checkbutton(opts, text="プレイリストをまとめて取得",
                         variable=self.var_playlist).pack(side="left")
-        self.chk_subs = ttk.Checkbutton(opts, text="字幕ファイルも保存する（動画のみ）",
-                                        variable=self.var_subs)
-        self.chk_subs.pack(side="left", padx=(16, 0))
-
-        opts2 = ttk.Frame(f_mode)
-        opts2.pack(fill="x", padx=8, pady=(0, 8))
-        self.chk_mp4 = ttk.Checkbutton(opts2, text="mp4 に統一する（mkv を避ける）",
+        self.chk_mp4 = ttk.Checkbutton(opts, text="mp4 に統一する（mkv を避ける）",
                                        variable=self.var_mp4)
-        self.chk_mp4.pack(side="left")
-        ttk.Label(opts2, text="※ 古い機器や編集ソフト向け。画質が 1 段下がることがあります",
+        self.chk_mp4.pack(side="left", padx=(16, 0))
+        ttk.Label(opts, text="※ 古い機器や編集ソフト向け。画質が 1 段下がることがあります",
                   foreground="#666").pack(side="left", padx=(8, 0))
+
+        # --- 4. 字幕 ---
+        f_sub = ttk.LabelFrame(outer, text="4. 字幕（動画に用意されているもの）")
+        f_sub.pack(fill="both", expand=True, **pad)
+
+        sub_top = ttk.Frame(f_sub)
+        sub_top.pack(fill="x", padx=8, pady=(8, 4))
+        self.btn_probe = ttk.Button(sub_top, text="この URL の字幕を調べる", width=24,
+                                    command=self.on_probe)
+        self.btn_probe.pack(side="left")
+        ttk.Label(sub_top, textvariable=self.var_subinfo,
+                  foreground="#666").pack(side="left", padx=(8, 0))
+
+        sub_wrap = ttk.Frame(f_sub)
+        sub_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        # exportselection を切らないと、別の欄を触った時点で選択が消える
+        self.list_subs = tk.Listbox(sub_wrap, height=5, selectmode="extended",
+                                    exportselection=False, activestyle="none")
+        ssb = ttk.Scrollbar(sub_wrap, orient="vertical", command=self.list_subs.yview)
+        self.list_subs.configure(yscrollcommand=ssb.set)
+        self.list_subs.grid(row=0, column=0, sticky="nsew")
+        ssb.grid(row=0, column=1, sticky="ns")
+        sub_wrap.rowconfigure(0, weight=1)
+        sub_wrap.columnconfigure(0, weight=1)
+
+        sub_opt = ttk.Frame(f_sub)
+        sub_opt.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Checkbutton(sub_opt, text="字幕だけ保存する（動画・音声は保存しない）",
+                        variable=self.var_subonly).pack(side="left")
+        ttk.Label(sub_opt, text="形式:").pack(side="left", padx=(16, 4))
+        ttk.Radiobutton(sub_opt, text="srt", value="srt",
+                        variable=self.var_subfmt).pack(side="left")
+        ttk.Radiobutton(sub_opt, text="vtt", value="vtt",
+                        variable=self.var_subfmt).pack(side="left", padx=(4, 0))
+        ttk.Label(sub_opt, text="※ 選んだものだけ保存します（Ctrl キーで複数選択）",
+                  foreground="#666").pack(side="left", padx=(12, 0))
 
         # --- 実行 ---
         run_row = ttk.Frame(outer)
@@ -313,11 +348,77 @@ class App:
         except OSError as e:
             messagebox.showerror(APP_TITLE, "フォルダを開けませんでした。\n\n{}".format(e))
 
+    def _urls(self):
+        return [u.strip() for u in self.txt_url.get("1.0", "end").splitlines() if u.strip()]
+
+    def on_probe(self):
+        """先頭の URL に用意されている字幕を調べて一覧に出す。"""
+        if self._busy():
+            return
+        urls = self._urls()
+        if not urls or not looks_like_url(urls[0]):
+            messagebox.showinfo(APP_TITLE, "先に URL を貼り付けてください。")
+            return
+        if binaries.missing(need_ffmpeg=False):
+            messagebox.showinfo(APP_TITLE, "先に「部品を入れ直す」で yt-dlp を取得してください。")
+            return
+
+        self.list_subs.delete(0, "end")
+        self.sub_items = []
+        self.var_subinfo.set("調べています...")
+        self._set_busy(True, cancellable=False)
+        self._log("── 字幕を調べています: {} ──".format(urls[0]))
+        self._run_in_thread(lambda: self._work_probe(urls[0]))
+
+    def _work_probe(self, url):
+        try:
+            title, items = runner.probe_subtitles(url)
+        except runner.ProbeError as e:
+            text = str(e)
+            self.queue.put(("log", text))
+            hint = runner.hint_for(text)
+            if hint:
+                self.queue.put(("log", hint))
+            self.queue.put(("subinfo", "調べられませんでした"))
+            self.queue.put(("done", False, "字幕を調べられませんでした。"))
+            return
+        self.queue.put(("subs", title, items))
+
+    def _show_subs(self, title, items):
+        self.sub_items = items
+        self.list_subs.delete(0, "end")
+        for item in items:
+            self.list_subs.insert("end", runner.subtitle_label(item))
+        self._log("動画: {}".format(title))
+        if items:
+            manual = sum(1 for i in items if not i["auto"])
+            self.var_subinfo.set(
+                "{} 件（手動 {} / 自動生成 {}）".format(len(items), manual, len(items) - manual))
+            self._log("字幕が {} 件見つかりました。保存したいものを選んでください。".format(len(items)))
+        else:
+            self.var_subinfo.set("この動画に字幕はありません")
+            self._log("字幕は用意されていませんでした。"
+                      "文字起こしが必要なら Whisper 字幕作成ツールをお使いください。")
+
+    def _selected_subs(self):
+        """一覧で選ばれている字幕を、yt-dlp に渡す形にまとめる。"""
+        picked = [self.sub_items[i] for i in self.list_subs.curselection()
+                  if i < len(self.sub_items)]
+        if not picked:
+            return None
+        return {
+            "langs": sorted({item["lang"] for item in picked}),
+            "manual": any(not item["auto"] for item in picked),
+            "auto": any(item["auto"] for item in picked),
+            "fmt": self.var_subfmt.get(),
+            "only": self.var_subonly.get(),
+        }
+
     def on_start(self):
         if self.worker and self.worker.is_alive():
             return
 
-        urls = [u.strip() for u in self.txt_url.get("1.0", "end").splitlines() if u.strip()]
+        urls = self._urls()
         bad = [u for u in urls if not looks_like_url(u)]
         if not urls:
             messagebox.showinfo(APP_TITLE, "URL を貼り付けてください。")
@@ -333,6 +434,14 @@ class App:
         outdir = self.var_outdir.get().strip()
         if not os.path.isdir(outdir):
             messagebox.showwarning(APP_TITLE, "保存先フォルダが見つかりません。")
+            return
+
+        if self.var_subonly.get() and not self.list_subs.curselection():
+            messagebox.showinfo(
+                APP_TITLE,
+                "「字幕だけ保存する」が入っていますが、字幕が選ばれていません。\n\n"
+                "「この URL の字幕を調べる」を押してから、\n"
+                "保存したい字幕を一覧で選んでください。")
             return
 
         if binaries.missing():
@@ -444,11 +553,17 @@ class App:
         mode = self.var_mode.get()
         outdir = self.var_outdir.get().strip()
         playlist = self.var_playlist.get()
-        subs = self.var_subs.get() and mode.startswith("video")
+        subs = self._selected_subs()
         mp4_only = self.var_mp4.get() and mode.startswith("video")
-        label = runner.MODE_NAMES.get(mode, mode)
-        if mp4_only:
-            label += " / mp4 に統一"
+
+        if subs and subs["only"]:
+            label = "字幕のみ"
+        else:
+            label = runner.MODE_NAMES.get(mode, mode)
+            if mp4_only:
+                label += " / mp4 に統一"
+        if subs:
+            label += " / 字幕 {}".format("・".join(subs["langs"]))
         self._log("── ダウンロード開始（{}）──".format(label))
         self._run_in_thread(
             lambda: self._work_download(urls, mode, outdir, playlist, subs, mp4_only))
@@ -523,6 +638,12 @@ class App:
                     self.var_status.set(text)
                 elif kind == "parts":
                     self._refresh_parts()
+                elif kind == "subs":
+                    self._show_subs(msg[1], msg[2])
+                    self._set_busy(False)
+                    self.var_status.set("字幕を調べました。")
+                elif kind == "subinfo":
+                    self.var_subinfo.set(msg[1])
                 elif kind == "chain":
                     self._refresh_parts()
                     self._start_download(msg[1])
@@ -546,7 +667,7 @@ class App:
 
     def _set_busy(self, busy, cancellable=True):
         state = "disabled" if busy else "normal"
-        for widget in (self.btn_start, self.btn_browse,
+        for widget in (self.btn_start, self.btn_browse, self.btn_probe,
                        self.btn_update, self.btn_reinstall):
             widget.configure(state=state)
         self.btn_cancel.configure(state="normal" if (busy and cancellable) else "disabled")
@@ -555,9 +676,7 @@ class App:
     def _update_states(self):
         """動画モードのときだけ、動画向けのオプションを触れるようにする。"""
         is_video = self.var_mode.get().startswith("video")
-        state = "normal" if is_video else "disabled"
-        self.chk_subs.configure(state=state)
-        self.chk_mp4.configure(state=state)
+        self.chk_mp4.configure(state="normal" if is_video else "disabled")
 
     # ------------------------------------------------------------ 設定
 
@@ -574,8 +693,8 @@ class App:
             "outdir": self.var_outdir.get(),
             "mode": self.var_mode.get(),
             "playlist": self.var_playlist.get(),
-            "subs": self.var_subs.get(),
             "mp4_only": self.var_mp4.get(),
+            "sub_format": self.var_subfmt.get(),
             "width": self.root.winfo_width(),
             "height": self.root.winfo_height(),
         })
