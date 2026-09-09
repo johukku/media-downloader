@@ -70,8 +70,12 @@ def hint_for(text):
     return None
 
 
-def build_args(url, mode, outdir, playlist=False, subs=False):
-    """yt-dlp に渡す引数を組み立てる。"""
+def build_args(url, mode, outdir, playlist=False, subs=False, mp4_only=False):
+    """yt-dlp に渡す引数を組み立てる。
+
+    mp4_only は「画質より互換性」の切り替え。
+    yt-dlp 公式の -t mp4 プリセットと同じ内容を明示的に並べている。
+    """
     args = [
         binaries.ytdlp_path(),
 
@@ -98,13 +102,22 @@ def build_args(url, mode, outdir, playlist=False, subs=False):
     args.append("--yes-playlist" if playlist else "--no-playlist")
 
     if mode.startswith("video"):
-        args += ["-f", "bv*+ba/b", "--merge-output-format", "mp4/mkv"]
-        if mode == "video_1080":
-            args += ["-S", "res:1080,ext:mp4:m4a"]
-        elif mode == "video_720":
-            args += ["-S", "res:720,ext:mp4:m4a"]
+        args += ["-f", "bv*+ba/b"]
+        # 「res」は解像度の上限。指定しなければサイトが持っている最高のものを選ぶ
+        res = {"video_1080": "res:1080", "video_720": "res:720"}.get(mode, "res")
+
+        if mp4_only:
+            # 確実に mp4 で受け取りたいとき。h264 と aac を優先するので、
+            # サイトによっては解像度が 1 段下がることがある。
+            args += ["--merge-output-format", "mp4", "--remux-video", "mp4",
+                     "-S", "vcodec:h264,lang,quality,{},fps,hdr:12,acodec:aac".format(res)]
         else:
-            args += ["-S", "ext:mp4:m4a"]
+            # 画質を最優先する。ここで ext を指定すると解像度より
+            # 「mp4 であること」が優先されてしまうので、指定してはいけない。
+            args += ["--merge-output-format", "mp4/mkv"]
+            if res != "res":
+                args += ["-S", res]
+
         if subs:
             args += ["--write-subs", "--write-auto-subs",
                      "--sub-langs", "ja.*,en.*", "--convert-subs", "srt"]
@@ -149,12 +162,13 @@ def _destination_of(line):
 class Job:
     """1 本の URL のダウンロード。中止できるように process を持つ。"""
 
-    def __init__(self, url, mode, outdir, playlist=False, subs=False):
+    def __init__(self, url, mode, outdir, playlist=False, subs=False, mp4_only=False):
         self.url = url
         self.mode = mode
         self.outdir = outdir
         self.playlist = playlist
         self.subs = subs
+        self.mp4_only = mp4_only
         self.proc = None
         self.cancelled = False
         self.files = []          # 出来上がったファイル
@@ -174,7 +188,7 @@ class Job:
     def run(self, on_log=None, on_progress=None):
         """最後まで走らせて終了コードを返す。中止したときは None。"""
         args = build_args(self.url, self.mode, self.outdir,
-                          self.playlist, self.subs)
+                          self.playlist, self.subs, self.mp4_only)
         try:
             self.proc = subprocess.Popen(
                 args,

@@ -114,6 +114,7 @@ class App:
         self.var_mode = tk.StringVar(value=self.settings.get("mode", "video_best"))
         self.var_playlist = tk.BooleanVar(value=self.settings.get("playlist", False))
         self.var_subs = tk.BooleanVar(value=self.settings.get("subs", False))
+        self.var_mp4 = tk.BooleanVar(value=self.settings.get("mp4_only", False))
         self.var_status = tk.StringVar(value="準備中...")
         self.var_parts = tk.StringVar(value="")
 
@@ -188,12 +189,20 @@ class App:
                                 row=i // 3, column=i % 3, sticky="w", padx=(0, 16), pady=2)
 
         opts = ttk.Frame(f_mode)
-        opts.pack(fill="x", padx=8, pady=(0, 8))
+        opts.pack(fill="x", padx=8, pady=(0, 2))
         ttk.Checkbutton(opts, text="プレイリストをまとめて取得",
                         variable=self.var_playlist).pack(side="left")
         self.chk_subs = ttk.Checkbutton(opts, text="字幕ファイルも保存する（動画のみ）",
                                         variable=self.var_subs)
         self.chk_subs.pack(side="left", padx=(16, 0))
+
+        opts2 = ttk.Frame(f_mode)
+        opts2.pack(fill="x", padx=8, pady=(0, 8))
+        self.chk_mp4 = ttk.Checkbutton(opts2, text="mp4 に統一する（mkv を避ける）",
+                                       variable=self.var_mp4)
+        self.chk_mp4.pack(side="left")
+        ttk.Label(opts2, text="※ 古い機器や編集ソフト向け。画質が 1 段下がることがあります",
+                  foreground="#666").pack(side="left", padx=(8, 0))
 
         # --- 実行 ---
         run_row = ttk.Frame(outer)
@@ -436,10 +445,15 @@ class App:
         outdir = self.var_outdir.get().strip()
         playlist = self.var_playlist.get()
         subs = self.var_subs.get() and mode.startswith("video")
-        self._log("── ダウンロード開始（{}）──".format(runner.MODE_NAMES.get(mode, mode)))
-        self._run_in_thread(lambda: self._work_download(urls, mode, outdir, playlist, subs))
+        mp4_only = self.var_mp4.get() and mode.startswith("video")
+        label = runner.MODE_NAMES.get(mode, mode)
+        if mp4_only:
+            label += " / mp4 に統一"
+        self._log("── ダウンロード開始（{}）──".format(label))
+        self._run_in_thread(
+            lambda: self._work_download(urls, mode, outdir, playlist, subs, mp4_only))
 
-    def _work_download(self, urls, mode, outdir, playlist, subs):
+    def _work_download(self, urls, mode, outdir, playlist, subs, mp4_only):
         done = 0
         failed = []
         for index, url in enumerate(urls, 1):
@@ -449,7 +463,7 @@ class App:
             self.queue.put(("status", "{}取得しています...".format(head)))
             self.queue.put(("log", "{} {}".format(head, url).strip()))
 
-            self.job = runner.Job(url, mode, outdir, playlist, subs)
+            self.job = runner.Job(url, mode, outdir, playlist, subs, mp4_only)
             code = self.job.run(
                 on_log=lambda line: self.queue.put(("log", line)),
                 on_progress=lambda p, s, e: self.queue.put(
@@ -539,9 +553,11 @@ class App:
         self._update_states()
 
     def _update_states(self):
-        """動画モードのときだけ字幕オプションを触れるようにする。"""
+        """動画モードのときだけ、動画向けのオプションを触れるようにする。"""
         is_video = self.var_mode.get().startswith("video")
-        self.chk_subs.configure(state="normal" if is_video else "disabled")
+        state = "normal" if is_video else "disabled"
+        self.chk_subs.configure(state=state)
+        self.chk_mp4.configure(state=state)
 
     # ------------------------------------------------------------ 設定
 
@@ -559,6 +575,7 @@ class App:
             "mode": self.var_mode.get(),
             "playlist": self.var_playlist.get(),
             "subs": self.var_subs.get(),
+            "mp4_only": self.var_mp4.get(),
             "width": self.root.winfo_width(),
             "height": self.root.winfo_height(),
         })
