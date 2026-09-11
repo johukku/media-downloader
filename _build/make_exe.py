@@ -3,7 +3,7 @@ r"""PyInstaller で単体 exe 版（onedir）をビルドする（開発者用�
 
     python _build\make_exe.py
 
-このツールは標準ライブラリと tkinter しか使わないので、出来上がりは 15MB 前後です。
+このツールは標準ライブラリと tkinter しか使わないので、出来上がりは 27MB 前後です（ZIP で 11MB）。
 yt-dlp と FFmpeg は同梱せず、利用者の PC が初回起動時に取得します。
 """
 
@@ -93,6 +93,17 @@ def main():
     if os.path.exists(readme):
         shutil.copy(readme, os.path.join(out_dir, "はじめにお読みください.txt"))
 
+    # アンインストーラ（johukku 製ツール共通の方式）と、README で案内している MIT のライセンス文
+    for name in ("アンインストール.bat", "uninstall.ps1", "LICENSE"):
+        shutil.copy(os.path.join(ROOT, name), os.path.join(out_dir, name))
+
+    problems = check_uninstaller(out_dir)
+    if problems:
+        print("\n!! アンインストーラと配布物が食い違っています:")
+        for problem in problems:
+            print("   -", problem)
+        return 1
+
     zip_path = _make_zip(out_dir, version)
 
     size = _dir_size(out_dir)
@@ -107,6 +118,41 @@ def main():
     print("受け取った人は「{}」をダブルクリックするだけです。".format(FINAL_EXE))
     print("yt-dlp と FFmpeg は初回起動時に自動で取得されます。")
     return 0
+
+
+def check_uninstaller(out_dir):
+    """アンインストーラが配布物と食い違っていないか確かめ、問題の一覧を返す。
+
+    uninstall.ps1 は「配布物として知っているもの」しか消さない。
+    出来上がったフォルダに一覧に無いものがあると、それが残ってフォルダが消えない。
+    文字コードも、ずれると日本語が化けたり bat が途中で止まったりするので見ておく。
+    """
+    problems = []
+
+    with open(os.path.join(ROOT, "uninstall.ps1"), "rb") as f:
+        raw = f.read()
+    if not raw.startswith(b"\xef\xbb\xbf"):
+        problems.append("uninstall.ps1 に BOM がありません（PowerShell 5.1 が日本語を読み違えます）")
+    text = raw.decode("utf-8-sig")
+    known = set()
+    for var in ("$KnownFiles", "$KnownDirs"):
+        start = text.find(var + " = @(")
+        end = text.find("\n)", start)
+        block = text[start:end] if 0 <= start < end else ""
+        known |= {line.strip().split("'")[1] for line in block.splitlines()
+                  if line.strip().startswith("'")}
+    for name in sorted(os.listdir(out_dir)):
+        if name not in known:
+            problems.append("uninstall.ps1 の $KnownFiles / $KnownDirs に {} がありません".format(name))
+
+    with open(os.path.join(ROOT, "アンインストール.bat"), "rb") as f:
+        bat = f.read()
+    if any(b > 127 for b in bat):
+        problems.append("アンインストール.bat は ASCII だけで書いてください")
+    if bat.count(b"\n") != bat.count(b"\r\n"):
+        problems.append("アンインストール.bat の改行を CRLF にしてください")
+
+    return problems
 
 
 def _make_zip(out_dir, version):

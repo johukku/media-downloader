@@ -18,7 +18,7 @@ import traceback
 from tkinter import filedialog, messagebox, ttk
 
 APP_TITLE = "メディアダウンローダー"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
@@ -124,8 +124,7 @@ class App:
         self.sub_items = []
 
         self.root.title("{} v{}".format(APP_TITLE, APP_VERSION))
-        self.root.geometry("{}x{}".format(
-            self.settings.get("width", 800), self.settings.get("height", 800)))
+        self.root.geometry("{}x{}".format(*self._initial_size()))
         self.root.minsize(720, 660)
 
         self._build_ui()
@@ -134,12 +133,37 @@ class App:
         self.root.after(100, self._pump)
         self.root.after(200, self._first_run)
 
+    def _initial_size(self):
+        """保存された窓の大きさ。画面からはみ出すなら、収まるように縮める。"""
+        try:
+            width = int(self.settings.get("width", 800))
+            height = int(self.settings.get("height", 800))
+        except (TypeError, ValueError):
+            width, height = 800, 800
+        # 1366x768 のノート PC だと、既定の高さ 800 は画面に収まらない（タスクバーと枠の分を引く）
+        width = min(width, self.root.winfo_screenwidth() - 40)
+        height = min(height, self.root.winfo_screenheight() - 80)
+        return max(width, 720), max(height, 660)
+
     # ------------------------------------------------------------ 画面
 
     def _build_ui(self):
         pad = {"padx": 8, "pady": 6}
         outer = ttk.Frame(self.root)
         outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # --- 下段（いちばん最初に置く）---
+        # pack は窓の高さが足りないとき、後から置いたものから削っていく。
+        # ここを最後に置くと、壊れたときに押してほしい「yt-dlp を更新」が真っ先に消える。
+        bottom = ttk.Frame(outer)
+        bottom.pack(side="bottom", fill="x", **pad)
+        ttk.Label(bottom, textvariable=self.var_parts, foreground="#666").pack(side="left")
+        self.btn_reinstall = ttk.Button(bottom, text="部品を入れ直す", width=14,
+                                        command=self.on_reinstall)
+        self.btn_reinstall.pack(side="right")
+        self.btn_update = ttk.Button(bottom, text="yt-dlp を更新", width=14,
+                                     command=self.on_update)
+        self.btn_update.pack(side="right", padx=(0, 6))
 
         # --- 1. URL ---
         f_url = ttk.LabelFrame(outer, text="1. URL")
@@ -265,17 +289,6 @@ class App:
         lsb.grid(row=0, column=1, sticky="ns")
         log_wrap.rowconfigure(0, weight=1)
         log_wrap.columnconfigure(0, weight=1)
-
-        # --- 下段 ---
-        bottom = ttk.Frame(outer)
-        bottom.pack(fill="x", **pad)
-        ttk.Label(bottom, textvariable=self.var_parts, foreground="#666").pack(side="left")
-        self.btn_reinstall = ttk.Button(bottom, text="部品を入れ直す", width=14,
-                                        command=self.on_reinstall)
-        self.btn_reinstall.pack(side="right")
-        self.btn_update = ttk.Button(bottom, text="yt-dlp を更新", width=14,
-                                     command=self.on_update)
-        self.btn_update.pack(side="right", padx=(0, 6))
 
     # ------------------------------------------------------------ 起動時
 

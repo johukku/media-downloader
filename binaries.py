@@ -31,7 +31,7 @@ YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.ex
 FFMPEG_URL = ("https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/"
               "ffmpeg-master-latest-win64-gpl-shared.zip")
 
-USER_AGENT = "johukku-media-downloader/1.0 (+https://johukku.pages.dev/)"
+USER_AGENT = "johukku-media-downloader/1.1 (+https://johukku.pages.dev/)"
 
 # 取得前の確認ダイアログに出すおおよそのサイズ
 APPROX_SIZE = {
