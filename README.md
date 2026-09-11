@@ -7,6 +7,8 @@ URL を貼り付けるだけで、動画や音声を保存する Windows 用の 
 **[→ ダウンロード（最新版）](https://github.com/johukku/media-downloader/releases/latest)**　|　
 **[→ 使い方](https://johukku.pages.dev/downloader/)**
 
+![スクリーンショット](https://johukku.pages.dev/assets/downloader.png)
+
 ---
 
 ## 特徴
