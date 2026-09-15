@@ -151,3 +151,9 @@ MIT License（[LICENSE](LICENSE) を参照）
 
 動画サイト側の仕様変更で急に動かなくなることがあります。
 その場合はまず画面右下の「yt-dlp を更新」をお試しください。
+
+## 関連
+
+- [Whisper 字幕作成ツール](https://github.com/johukku/whisper-subtitle-tool) — 保存した動画から字幕を作る
+- [字幕エディター](https://github.com/johukku/subtitle-editor) — 保存した自動生成字幕を、音を聞きながら直す
+- [メディアコンバーター](https://github.com/johukku/media-converter) — 保存した動画を MP4 にそろえる・小さくする
