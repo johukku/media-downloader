@@ -5,9 +5,9 @@ URL を貼り付けるだけで、動画や音声を保存する Windows 用の 
 **この 2 つは初回起動時に自動で取得します**（同梱していません）。
 
 **[→ ダウンロード（最新版）](https://github.com/johukku/media-downloader/releases/latest)**　|　
-**[→ 使い方](https://johukku.pages.dev/downloader/)**
+**[→ 使い方](https://johukku.com/downloader/)**
 
-![スクリーンショット](https://johukku.pages.dev/assets/downloader.png)
+![スクリーンショット](https://johukku.com/assets/downloader.png)
 
 ---
 
